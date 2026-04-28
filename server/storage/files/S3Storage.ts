@@ -41,9 +41,10 @@ export default class S3Storage extends BaseStorage {
     maxUploadSize: number,
     contentType = "image"
   ) {
+    const prefixedKey = this.getPrefixedKey(key);
     const params: PresignedPostOptions = {
       Bucket: env.AWS_S3_UPLOAD_BUCKET_NAME as string,
-      Key: key,
+      Key: prefixedKey,
       Conditions: compact([
         ["content-length-range", 0, maxUploadSize],
         ["starts-with", "$Content-Type", contentType],
@@ -51,7 +52,7 @@ export default class S3Storage extends BaseStorage {
       ]),
       Fields: {
         "Content-Disposition": this.getContentDisposition(contentType),
-        key,
+        key: prefixedKey,
         ...(env.AWS_S3_ACL && { ACL: env.AWS_S3_ACL as ObjectCannedACL }),
       },
       Expires: 3600,
@@ -96,7 +97,7 @@ export default class S3Storage extends BaseStorage {
   }
 
   public getUrlForKey(key: string): string {
-    return `${this.getPublicEndpoint()}/${key}`;
+    return `${this.getPublicEndpoint()}/${this.getPrefixedKey(key)}`;
   }
 
   public store = async ({
@@ -110,12 +111,13 @@ export default class S3Storage extends BaseStorage {
     key: string;
     acl?: string;
   }) => {
+    const prefixedKey = this.getPrefixedKey(key);
     const upload = new Upload({
       client: this.client,
       params: {
         ...(env.AWS_S3_ACL && { ACL: env.AWS_S3_ACL as ObjectCannedACL }),
         Bucket: this.getBucket(),
-        Key: key,
+        Key: prefixedKey,
         ContentType: contentType,
         // See bug, if used causes large files to hang: https://github.com/aws/aws-sdk-js-v3/issues/3915
         // ContentLength: contentLength,
@@ -126,14 +128,14 @@ export default class S3Storage extends BaseStorage {
     await upload.done();
 
     const endpoint = this.getPublicEndpoint(true);
-    return `${endpoint}/${key}`;
+    return `${endpoint}/${prefixedKey}`;
   };
 
   public async deleteFile(key: string) {
     await this.client.send(
       new DeleteObjectCommand({
         Bucket: this.getBucket(),
-        Key: key,
+        Key: this.getPrefixedKey(key),
       })
     );
   }
@@ -143,13 +145,14 @@ export default class S3Storage extends BaseStorage {
     expiresIn = S3Storage.defaultSignedUrlExpires
   ) => {
     const isDocker = env.AWS_S3_UPLOAD_BUCKET_URL.match(/http:\/\/s3:/);
+    const prefixedKey = this.getPrefixedKey(key);
     const params = {
       Bucket: this.getBucket(),
-      Key: key,
+      Key: prefixedKey,
     };
 
     if (isDocker) {
-      return `${this.getPublicEndpoint()}/${key}`;
+      return `${this.getPublicEndpoint()}/${prefixedKey}`;
     } else {
       // Ensure expiration does not exceed AWS S3 Signature V4 limit of 7 days
       const clampedExpiresIn = Math.min(
@@ -210,7 +213,7 @@ export default class S3Storage extends BaseStorage {
       .send(
         new HeadObjectCommand({
           Bucket: this.getBucket(),
-          Key: key,
+          Key: this.getPrefixedKey(key),
         })
       )
       .then(() => true)
@@ -218,17 +221,18 @@ export default class S3Storage extends BaseStorage {
   }
 
   public moveFile = async (fromKey: string, toKey: string) => {
+    const prefixedFromKey = this.getPrefixedKey(fromKey);
     await this.client.send(
       new CopyObjectCommand({
         Bucket: this.getBucket(),
-        CopySource: `${env.AWS_S3_UPLOAD_BUCKET_NAME}/${fromKey}`,
-        Key: toKey,
+        CopySource: `${env.AWS_S3_UPLOAD_BUCKET_NAME}/${prefixedFromKey}`,
+        Key: this.getPrefixedKey(toKey),
       })
     );
     await this.client.send(
       new DeleteObjectCommand({
         Bucket: this.getBucket(),
-        Key: fromKey,
+        Key: prefixedFromKey,
       })
     );
   };
@@ -241,7 +245,7 @@ export default class S3Storage extends BaseStorage {
       .send(
         new GetObjectCommand({
           Bucket: this.getBucket(),
-          Key: key,
+          Key: this.getPrefixedKey(key),
           Range: range ? `bytes=${range.start}-${range.end}` : undefined,
         })
       )
@@ -279,5 +283,13 @@ export default class S3Storage extends BaseStorage {
 
   private getBucket() {
     return env.AWS_S3_ACCELERATE_URL || env.AWS_S3_UPLOAD_BUCKET_NAME || "";
+  }
+
+  private getPrefixedKey(key: string) {
+    const prefix = env.AWS_S3_UPLOAD_BUCKET_PREFIX;
+    if (!prefix) {
+      return key;
+    }
+    return `${prefix}/${key.replace(/^\/+/, "")}`;
   }
 }
