@@ -637,6 +637,17 @@ export class Environment {
   );
 
   /**
+   * Optional sub-path within the S3 bucket under which file attachments are
+   * stored. Useful when sharing a bucket between multiple applications. The
+   * prefix is applied transparently — keys stored in the database remain
+   * unprefixed.
+   */
+  @IsOptional()
+  public AWS_S3_UPLOAD_BUCKET_PREFIX = (
+    this.toOptionalString(environment.AWS_S3_UPLOAD_BUCKET_PREFIX) ?? ""
+  ).replace(/^\/+|\/+$/g, "");
+
+  /**
    * Whether to force path style URLs for S3 objects, this is required for some
    * S3-compatible storage providers.
    */
